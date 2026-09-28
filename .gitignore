@@ -5,3 +5,8 @@ memory/.obsidian/cache
 memory/.obsidian/plugins/*/data.json
 memory/.trash/
 .DS_Store
+
+# Research data and caches (re-created by research/fetch_data.py)
+data/
+__pycache__/
+*.pyc

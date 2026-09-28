@@ -10,6 +10,10 @@ Index of Passing-bot memory. Start here.
 ## Project
 - [[Project/Overview]] — what Passing-bot is and where it stands
 
+## Research
+- [[Research/Findings]] — what was tested and the results
+- [[Research/Data]] — data sources, coverage, time-zone pitfalls, costs
+
 ## User
 - [[User/Preferences]] — how the user likes to work
 
