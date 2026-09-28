@@ -22,30 +22,33 @@ from numba import njit
 
 # parameter vector layout
 P_RISK, P_HALT, P_DAYLIM, P_MAXLOSS, P_TARGET, P_MAXPOS, P_TBUF, P_LEV, \
-    P_ROOMFRAC, P_TOTBUF, P_NEARTGT, P_ENDGAME_T, P_ENDGAME_MULT, P_RISK_EQ = range(14)
-NPARAM = 14
+    P_ROOMFRAC, P_TOTBUF, P_NEARTGT, P_ENDGAME_T, P_ENDGAME_MULT, P_RISK_EQ, \
+    P_BOLD, P_BOLD_RRMAX = range(16)
+NPARAM = 16
 
 
 def params(risk=0.01, halt=0.025, daylim=0.03, maxloss=0.06, target=0.10, maxpos=1,
            tbuf=0.0005, lev=30.0, roomfrac=1.0, totbuf=0.002, neartgt=0.0,
-           endgame_t=2.0, endgame_mult=1.0, risk_eq=0.0):
+           endgame_t=2.0, endgame_mult=1.0, risk_eq=0.0, bold=0.0, bold_rrmax=20.0):
+    """bold > 0: at entry the take-profit is moved so that a win lifts equity
+    to the challenge target (bold play), capped at bold_rrmax * risk."""
     p = np.zeros(NPARAM)
     p[:] = (risk, halt, daylim, maxloss, target, maxpos, tbuf, lev, roomfrac, totbuf,
-            neartgt, endgame_t, endgame_mult, risk_eq)
+            neartgt, endgame_t, endgame_mult, risk_eq, bold, bold_rrmax)
     return p
 
 
 @njit(cache=True)
-def _liq_equity(bal, npos, pk, pd, pq, pe, px, halfc):
+def _liq_equity(bal, npos, pk, pd, pq, pe, px, HC, t):
     eq = bal
     for i in range(npos):
         k = pk[i]
-        eq += pd[i] * pq[i] * (px[k] - pe[i]) - pq[i] * halfc[k]
+        eq += pd[i] * pq[i] * (px[k] - pe[i]) - pq[i] * HC[t, k]
     return eq
 
 
 @njit(cache=True)
-def run_challenge(s, e, O, H, L, C, day, halfc, slip,
+def run_challenge(s, e, O, H, L, C, day, HC, SL,
                   tk, t0, dirn, stop, tgt, t1, ent, j0, p):
     """Simulate one challenge over bars s..e (inclusive).
     Returns (status, end_bar, final_equity_frac, n_trades, min_equity_frac)
@@ -85,7 +88,7 @@ def run_challenge(s, e, O, H, L, C, day, halfc, slip,
     for t in range(s, e + 1):
         # ---------------- new day -----------------
         if t == s or day[t] != day[t - 1]:
-            eq_prev = _liq_equity(bal, npos, pk, pd, pq, pe, last, halfc)
+            eq_prev = _liq_equity(bal, npos, pk, pd, pq, pe, last, HC, t)
             day_ref = max(bal, eq_prev)
             halted = False
         halt_lvl = day_ref - p[P_HALT] * init
@@ -99,19 +102,19 @@ def run_challenge(s, e, O, H, L, C, day, halfc, slip,
             k = pk[i]
             o = O[t, k]
             if not np.isnan(o) and ((pd[i] > 0 and o <= ps[i]) or (pd[i] < 0 and o >= ps[i])):
-                fill = o - pd[i] * (halfc[k] + slip[k])
+                fill = o - pd[i] * (HC[t, k] + SL[t, k])
                 bal += pd[i] * pq[i] * (fill - pe[i])
                 npos -= 1
                 pk[i] = pk[npos]; pd[i] = pd[npos]; pq[i] = pq[npos]; pe[i] = pe[npos]
                 ps[i] = ps[npos]; pt[i] = pt[npos]; p1[i] = p1[npos]
             else:
                 i += 1
-        eq_open = _liq_equity(bal, npos, pk, pd, pq, pe, last, halfc)
+        eq_open = _liq_equity(bal, npos, pk, pd, pq, pe, last, HC, t)
         if eq_open <= halt_lvl and npos > 0:
             # EA closes everything at the open
             for i in range(npos):
                 k = pk[i]
-                bal += pd[i] * pq[i] * (last[k] - pd[i] * (halfc[k] + slip[k]) - pe[i])
+                bal += pd[i] * pq[i] * (last[k] - pd[i] * (HC[t, k] + SL[t, k]) - pe[i])
             npos = 0
             halted = True
         if bal < day_floor or bal < total_floor:
@@ -135,7 +138,7 @@ def run_challenge(s, e, O, H, L, C, day, halfc, slip,
                     continue
                 # reverse: close existing at open
                 i = same
-                fill = O[t, k] - pd[i] * (halfc[k] + slip[k])
+                fill = O[t, k] - pd[i] * (HC[t, k] + SL[t, k])
                 bal += pd[i] * pq[i] * (fill - pe[i])
                 npos -= 1
                 pk[i] = pk[npos]; pd[i] = pd[npos]; pq[i] = pq[npos]; pe[i] = pe[npos]
@@ -145,24 +148,24 @@ def run_challenge(s, e, O, H, L, C, day, halfc, slip,
                 continue
             d = dirn[j]
             px = O[t, k] if np.isnan(ent[j]) else ent[j]
-            fill = px + d * (halfc[k] + slip[k])
-            dist = abs(fill - stop[j]) + halfc[k] + slip[k]
+            fill = px + d * (HC[t, k] + SL[t, k])
+            dist = abs(fill - stop[j]) + HC[t, k] + SL[t, k]
             if (d > 0 and stop[j] >= fill) or (d < 0 and stop[j] <= fill) or dist <= 0:
                 j += 1
                 continue
-            eq = _liq_equity(bal, npos, pk, pd, pq, pe, last, halfc)
+            eq = _liq_equity(bal, npos, pk, pd, pq, pe, last, HC, t)
             base = p[P_RISK] * (eq if p[P_RISK_EQ] > 0 else init)
             frac_el = (t - s) / span
             if frac_el >= p[P_ENDGAME_T]:
                 base *= p[P_ENDGAME_MULT]
             open_risk = 0.0
             for i in range(npos):
-                open_risk += pq[i] * (abs(pe[i] - ps[i]) + halfc[pk[i]] + slip[pk[i]])
+                open_risk += pq[i] * (abs(pe[i] - ps[i]) + HC[t, pk[i]] + SL[t, pk[i]])
             room_day = (eq - halt_lvl - open_risk) * p[P_ROOMFRAC]
             room_tot = (eq - total_floor - p[P_TOTBUF] * init - open_risk) * p[P_ROOMFRAC]
             risk_amt = min(base, room_day, room_tot)
             if p[P_NEARTGT] > 0 and not np.isnan(tgt[j]):
-                gain_per = abs(tgt[j] - fill) - halfc[k]
+                gain_per = abs(tgt[j] - fill) - HC[t, k]
                 need = (target_lvl - eq) * p[P_NEARTGT]
                 if gain_per > 0:
                     risk_amt = min(risk_amt, max(need, 0.0) / gain_per * dist)
@@ -173,8 +176,16 @@ def run_challenge(s, e, O, H, L, C, day, halfc, slip,
             qmax = p[P_LEV] * eq / fill
             if q > qmax:
                 q = qmax
+            tp = tgt[j]
+            if p[P_BOLD] > 0:
+                need = target_lvl - eq + q * HC[t, k]
+                move = need / q
+                rmax = p[P_BOLD_RRMAX] * abs(fill - stop[j])
+                if move > rmax:
+                    move = rmax
+                tp = fill + d * move
             pk[npos] = k; pd[npos] = d; pq[npos] = q; pe[npos] = fill
-            ps[npos] = stop[j]; pt[npos] = tgt[j]; p1[npos] = t1[j]
+            ps[npos] = stop[j]; pt[npos] = tp; p1[npos] = t1[j]
             npos += 1
             ntr += 1
             j += 1
@@ -190,7 +201,7 @@ def run_challenge(s, e, O, H, L, C, day, halfc, slip,
                 continue
             hit = (pd[i] > 0 and lo <= ps[i]) or (pd[i] < 0 and hi >= ps[i])
             if hit:
-                fill = ps[i] - pd[i] * (halfc[k] + slip[k])
+                fill = ps[i] - pd[i] * (HC[t, k] + SL[t, k])
                 bal += pd[i] * pq[i] * (fill - pe[i])
                 npos -= 1
                 pk[i] = pk[npos]; pd[i] = pd[npos]; pq[i] = pq[npos]; pe[i] = pe[npos]
@@ -215,13 +226,13 @@ def run_challenge(s, e, O, H, L, C, day, halfc, slip,
             else:
                 adv = H[t, k]
                 fav = L[t, k]
-            wce += pd[i] * pq[i] * (adv - pe[i]) - pq[i] * halfc[k]
-            bce += pd[i] * pq[i] * (fav - pe[i]) - pq[i] * halfc[k]
+            wce += pd[i] * pq[i] * (adv - pe[i]) - pq[i] * HC[t, k]
+            bce += pd[i] * pq[i] * (fav - pe[i]) - pq[i] * HC[t, k]
         if npos > 0 and wce <= halt_lvl:
             # equity stop: flatten at the halt level, pay slippage
             sl = 0.0
             for i in range(npos):
-                sl += pq[i] * slip[pk[i]]
+                sl += pq[i] * SL[t, pk[i]]
             bal = halt_lvl - sl
             npos = 0
             halted = True
@@ -235,7 +246,7 @@ def run_challenge(s, e, O, H, L, C, day, halfc, slip,
         if npos > 0 and not stopped_any and bce >= target_lvl:
             sl = 0.0
             for i in range(npos):
-                sl += pq[i] * slip[pk[i]]
+                sl += pq[i] * SL[t, pk[i]]
             return 1, t, target_lvl - sl, ntr, mineq
         # take profits
         i = 0
@@ -248,7 +259,7 @@ def run_challenge(s, e, O, H, L, C, day, halfc, slip,
                 continue
             hit = (pd[i] > 0 and hi >= pt[i]) or (pd[i] < 0 and lo <= pt[i])
             if hit:
-                fill = pt[i] - pd[i] * halfc[k]
+                fill = pt[i] - pd[i] * HC[t, k]
                 bal += pd[i] * pq[i] * (fill - pe[i])
                 npos -= 1
                 pk[i] = pk[npos]; pd[i] = pd[npos]; pq[i] = pq[npos]; pe[i] = pe[npos]
@@ -263,33 +274,33 @@ def run_challenge(s, e, O, H, L, C, day, halfc, slip,
         while i < npos:
             if p1[i] <= t:
                 k = pk[i]
-                fill = last[k] - pd[i] * (halfc[k] + slip[k])
+                fill = last[k] - pd[i] * (HC[t, k] + SL[t, k])
                 bal += pd[i] * pq[i] * (fill - pe[i])
                 npos -= 1
                 pk[i] = pk[npos]; pd[i] = pd[npos]; pq[i] = pq[npos]; pe[i] = pe[npos]
                 ps[i] = ps[npos]; pt[i] = pt[npos]; p1[i] = p1[npos]
             else:
                 i += 1
-        eq = _liq_equity(bal, npos, pk, pd, pq, pe, last, halfc)
+        eq = _liq_equity(bal, npos, pk, pd, pq, pe, last, HC, t)
         if eq >= target_lvl:
             sl = 0.0
             for i in range(npos):
-                sl += pq[i] * slip[pk[i]]
+                sl += pq[i] * SL[t, pk[i]]
             return 1, t, eq - sl, ntr, mineq
         if npos == 0 and bal >= target_lvl:
             return 1, t, bal, ntr, mineq
-    eq = _liq_equity(bal, npos, pk, pd, pq, pe, last, halfc)
+    eq = _liq_equity(bal, npos, pk, pd, pq, pe, last, HC, t)
     return 0, e, eq, ntr, mineq
 
 
 @njit(cache=True)
-def run_all(starts, ends, O, H, L, C, day, halfc, slip, tk, t0, dirn, stop, tgt, t1, ent, p):
+def run_all(starts, ends, O, H, L, C, day, HC, SL, tk, t0, dirn, stop, tgt, t1, ent, p):
     n = starts.shape[0]
     out = np.zeros((n, 5))
     for c in range(n):
         s = starts[c]
         j0 = np.searchsorted(t0, s)
-        st, eb, fe, nt, me = run_challenge(s, ends[c], O, H, L, C, day, halfc, slip,
+        st, eb, fe, nt, me = run_challenge(s, ends[c], O, H, L, C, day, HC, SL,
                                            tk, t0, dirn, stop, tgt, t1, ent, j0, p)
         out[c, 0] = st
         out[c, 1] = eb
@@ -300,7 +311,7 @@ def run_all(starts, ends, O, H, L, C, day, halfc, slip, tk, t0, dirn, stop, tgt,
 
 
 @njit(cache=True)
-def trade_R(O, H, L, C, halfc, slip, tk, t0, dirn, stop, tgt, t1, ent):
+def trade_R(O, H, L, C, HC, SL, tk, t0, dirn, stop, tgt, t1, ent):
     """Outcome of every trade in isolation, in R (multiples of initial risk
     incl. costs). Returns (R, exit_bar)."""
     n = tk.shape[0]
@@ -314,8 +325,8 @@ def trade_R(O, H, L, C, halfc, slip, tk, t0, dirn, stop, tgt, t1, ent):
             continue
         d = dirn[j]
         px = O[t, k] if np.isnan(ent[j]) else ent[j]
-        fill = px + d * (halfc[k] + slip[k])
-        dist = abs(fill - stop[j]) + halfc[k] + slip[k]
+        fill = px + d * (HC[t, k] + SL[t, k])
+        dist = abs(fill - stop[j]) + HC[t, k] + SL[t, k]
         if (d > 0 and stop[j] >= fill) or (d < 0 and stop[j] <= fill):
             continue
         ex = np.nan
@@ -325,23 +336,24 @@ def trade_R(O, H, L, C, halfc, slip, tk, t0, dirn, stop, tgt, t1, ent):
             o = O[b, k]
             if not np.isnan(o):
                 if b > t and ((d > 0 and o <= stop[j]) or (d < 0 and o >= stop[j])):
-                    ex = o - d * (halfc[k] + slip[k])
+                    ex = o - d * (HC[b, k] + SL[b, k])
                     break
                 hi = H[b, k]
                 lo = L[b, k]
                 if (d > 0 and lo <= stop[j]) or (d < 0 and hi >= stop[j]):
-                    ex = stop[j] - d * (halfc[k] + slip[k])
+                    ex = stop[j] - d * (HC[b, k] + SL[b, k])
                     break
                 if not np.isnan(tgt[j]) and ((d > 0 and hi >= tgt[j]) or (d < 0 and lo <= tgt[j])):
-                    ex = tgt[j] - d * halfc[k]
+                    ex = tgt[j] - d * HC[b, k]
                     break
                 lastc = C[b, k]
             if b >= t1[j]:
-                ex = lastc - d * (halfc[k] + slip[k])
+                ex = lastc - d * (HC[b, k] + SL[b, k])
                 break
             b += 1
         if np.isnan(ex):
-            ex = lastc - d * (halfc[k] + slip[k])
+            b = min(b, T - 1)
+            ex = lastc - d * (HC[b, k] + SL[b, k])
         R[j] = d * (ex - fill) / dist
         xb[j] = b
     return R, xb

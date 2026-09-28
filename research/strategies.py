@@ -225,3 +225,29 @@ def orb_first_candle(df: pd.DataFrame, open_h: float = 16.5, bar_min: int = 5, e
     day = df.index[pos].normalize()
     t1 = day + pd.to_timedelta(exit_h, unit="h")
     return _mk(df.index[pos + 1], d, stop, ent + d * rr * risk, t1)
+
+
+def daily_fixed_time(df: pd.DataFrame, hour: float, dirn, sl_atr: float, rr: float,
+                     exit_h: float = 23.5, days_mask=None) -> pd.DataFrame:
+    """One market entry per day at server `hour`; dirn is +1/-1, or a Series
+    indexed by day (values -1/0/+1), or 'random' (seeded coin flip)."""
+    h = _hour(df.index)
+    a = daily_atr(df).to_numpy()
+    pos = np.nonzero(np.isclose(h, hour))[0]
+    pos = pos[~np.isnan(a[pos])]
+    day = df.index[pos].normalize()
+    if isinstance(dirn, str):
+        rng = np.random.default_rng(int(dirn.split(":")[1]) if ":" in dirn else 0)
+        d = rng.choice([-1.0, 1.0], len(pos))
+    elif isinstance(dirn, pd.Series):
+        d = dirn.reindex(day).fillna(0).to_numpy(float)
+    else:
+        d = np.full(len(pos), float(dirn))
+    keep = d != 0
+    if days_mask is not None:
+        keep &= days_mask.reindex(day).fillna(False).to_numpy(bool)
+    pos, d, day = pos[keep], d[keep], day[keep]
+    ent = df["open"].to_numpy()[pos]
+    risk = sl_atr * a[pos]
+    t1 = day + pd.to_timedelta(exit_h, unit="h")
+    return _mk(df.index[pos], d, ent - d * risk, ent + d * rr * risk if rr > 0 else np.nan, t1)

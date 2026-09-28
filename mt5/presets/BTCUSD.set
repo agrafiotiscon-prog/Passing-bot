@@ -1,0 +1,26 @@
+; PropBoldPlay preset for BTCUSD (24/7 crypto CFD), config selected on 2016-2021 only.
+; Backtest pass rate 2022-2026 (out of sample): ~37% per 14-day challenge.
+; Needs >= 1:3.3 leverage on BTC.
+InpInitialBalance=0
+InpTargetPct=10
+InpDailyLossPct=3
+InpMaxLossPct=6
+InpChallengeDays=14
+InpDayResetHour=0
+InpResetState=false
+InpRiskPct=2.9
+InpDailyHaltPct=2.9
+InpFloorBufferPct=0.2
+InpTargetBufferPct=0.05
+InpMaxRR=20
+InpEntryHour=1
+InpEntryMinute=0
+InpExitHour=23
+InpExitMinute=45
+InpTradeWeekends=true
+InpDirMode=0
+InpTrendDays=3
+InpAtrDays=14
+InpStopAtr=0.4
+InpMagic=20260928
+InpDeviationPoints=100

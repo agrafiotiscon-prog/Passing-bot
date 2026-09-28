@@ -175,15 +175,34 @@ def build_ej_fx(sym: str) -> dict[str, pd.DataFrame]:
     return {"M15": stitch(parts)}
 
 
+def build_btc() -> dict[str, pd.DataFrame]:
+    """Bitstamp BTC/USD 1-min (UTC) from 2016 on; 24/7."""
+    b = RAW / "btcusd"
+    parts = []
+    for f in ("bitstamp_2012_2025.csv.gz", "bitstamp_latest.csv"):
+        d = pd.read_csv(b / f)
+        d = d[d.timestamp >= 1451606400]  # 2016-01-01
+        d.index = utc_to_server(pd.DatetimeIndex(pd.to_datetime(d["timestamp"], unit="s")))
+        parts.append(_ohlc(d).assign(spread=np.nan))
+    m1 = pd.concat(parts)
+    m1 = m1[~m1.index.duplicated()].sort_index()
+    m5 = resample(m1, "5min")
+    return {"M5": m5.assign(src="bitstamp"), "M15": resample(m1, "15min").assign(src="bitstamp")}
+
+
 def main() -> None:
     BARS.mkdir(parents=True, exist_ok=True)
-    jobs = {"XAUUSD": build_xauusd, "EURUSD": build_eurusd}
+    import sys
+    jobs = {"XAUUSD": build_xauusd, "EURUSD": build_eurusd, "BTCUSD": build_btc}
     for s in ("NAS100", "US30", "SPX500"):
         jobs[s] = lambda s=s: build_index(s)
     jobs["GER40"] = lambda: build_index("GER40")
     for s in ("GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY", "GBPJPY", "EURGBP", "AUDJPY"):
         jobs[s] = lambda s=s: build_ej_fx(s)
+    only = sys.argv[1:]
     for sym, fn in jobs.items():
+        if only and sym not in only:
+            continue
         for tf, df in fn().items():
             df.to_parquet(BARS / f"{sym}_{tf}.parquet")
             print(f"{sym:7s} {tf:4s} {len(df):8d} bars {df.index[0]} -> {df.index[-1]}", flush=True)

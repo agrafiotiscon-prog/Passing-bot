@@ -19,9 +19,10 @@ Index of Passing-bot memory. Start here.
 
 ## Decisions
 - [[Decisions/0001-obsidian-memory]] — use an Obsidian vault for memory
+- [[Decisions/0002-bold-play-deliverable]] — ship bold-play EA, report honest ~35% pass rate
 
 ## Sessions
-- [[Sessions/2026-09-28]] — memory vault set up
+- [[Sessions/2026-09-28]] — memory vault; prop-challenge bot research + EA
 
 ## Templates
 - [[Templates/Session]] · [[Templates/Decision]]

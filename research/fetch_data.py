@@ -58,9 +58,16 @@ FILES = {
     "us30/gd_1m.csv": f"{GD}/us30-1m-ohlcv-index-historical-data/main/US30_1m.csv",
     "spx500/gd_1m.csv": f"{GD}/spx500-1m-ohlcv-index-historical-data/main/SPX500_1m.csv",
     "gbpusd/gd_1m.csv": f"{GD}/gbpusd-1m-ohlcv-forex-historical-data/main/GBPUSD_1m.csv",
+    # daily index samples 2024-05..2026-09
+    "nas100/gd_1d.csv": f"{GD}/nas100-1d-ohlcv-index-historical-data/main/NAS100_1d.csv",
+    "spx500/gd_1d.csv": f"{GD}/spx500-1d-ohlcv-index-historical-data/main/SPX500_1d.csv",
+    "us30/gd_1d.csv": f"{GD}/us30-1d-ohlcv-index-historical-data/main/US30_1d.csv",
     # --- MT5 exports 2022-08..2026-08 (devffex/dataset) ---------------------
     **{f"{p.lower()}/dev_M15.parquet": f"{GH}/devffex/dataset/main/{p}/M15/history.parquet"
        for p in ("EURUSD", "GBPUSD", "USDJPY")},
+    # --- BTCUSD Bitstamp 1-min (ff137/bitstamp-btcusd-minute-data) ---------
+    "btcusd/bitstamp_2012_2025.csv.gz": f"{GH}/ff137/bitstamp-btcusd-minute-data/main/data/historical/btcusd_bitstamp_1min_2012-2025.csv.gz",
+    "btcusd/bitstamp_latest.csv": f"{GH}/ff137/bitstamp-btcusd-minute-data/main/data/updates/btcusd_bitstamp_1min_latest.csv",
     # --- other FX (MT5 broker export, 2012-2022) ---------------------------
     **{f"{p.lower()}/ej_{tf}.csv": f"{EJ}/{p}/{p}{tf.lower()}.csv"
        for p in ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF",
