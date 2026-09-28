@@ -172,6 +172,8 @@ def build_ej_fx(sym: str) -> dict[str, pd.DataFrame]:
         parts.append(("mt5_dev", read_devffex(d / "dev_M15.parquet")))
     if (d / "gd_1m.csv").exists():
         parts.append(("getdata", resample(read_getdata(d / "gd_1m.csv"), "15min")))
+    if (d / "gd_15m.csv").exists():
+        parts.append(("getdata", read_getdata(d / "gd_15m.csv")))
     return {"M15": stitch(parts)}
 
 
@@ -190,6 +192,43 @@ def build_btc() -> dict[str, pd.DataFrame]:
     return {"M5": m5.assign(src="bitstamp"), "M15": resample(m1, "15min").assign(src="bitstamp")}
 
 
+def build_snow_plus(sym: str) -> dict[str, pd.DataFrame]:
+    """SnowGuru (Dukascopy/Binance, UTC) M15 + getdata 2026 15m sample."""
+    d = RAW / sym.lower()
+    parts = [("dukascopy", read_snow(d / "snow_M15.csv"))]
+    if (d / "gd_15m.csv").exists():
+        parts.insert(0, ("getdata", read_getdata(d / "gd_15m.csv")))
+    return {"M15": stitch(parts)}
+
+
+def build_synthetic_cross(sym: str) -> dict[str, pd.DataFrame]:
+    """EURGBP / EURJPY / GBPJPY from the majors (2012-2026). Opens and closes
+    are exact; high/low are the product bounds, so ranges are overstated --
+    use for close-based research only, not for stop/target simulation."""
+    legs = {"EURGBP": ("EURUSD", "GBPUSD", -1), "EURJPY": ("EURUSD", "USDJPY", 1),
+            "GBPJPY": ("GBPUSD", "USDJPY", 1)}[sym]
+    a = load(legs[0], "M15")
+    b = load(legs[1], "M15")
+    j = a.join(b, how="inner", lsuffix="_a", rsuffix="_b")
+    out = pd.DataFrame(index=j.index)
+    if legs[2] == 1:
+        out["open"], out["close"] = j.open_a * j.open_b, j.close_a * j.close_b
+        out["high"], out["low"] = j.high_a * j.high_b, j.low_a * j.low_b
+    else:
+        out["open"], out["close"] = j.open_a / j.open_b, j.close_a / j.close_b
+        out["high"], out["low"] = j.high_a / j.low_b, j.low_a / j.high_b
+    out = out[["open", "high", "low", "close"]]
+    out["spread"] = np.nan
+    parts = [("synthetic", out)]
+    real = RAW / sym.lower() / "ej_M15.csv"
+    if real.exists():
+        parts.insert(0, ("mt5_ej", read_ejtrader(real, 3 if sym.endswith("JPY") else 5)))
+    gdp = RAW / sym.lower() / "gd_15m.csv"
+    if gdp.exists():
+        parts.insert(0, ("getdata", read_getdata(gdp)))
+    return {"M15": stitch(parts)}
+
+
 def main() -> None:
     BARS.mkdir(parents=True, exist_ok=True)
     import sys
@@ -197,8 +236,12 @@ def main() -> None:
     for s in ("NAS100", "US30", "SPX500"):
         jobs[s] = lambda s=s: build_index(s)
     jobs["GER40"] = lambda: build_index("GER40")
-    for s in ("GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "EURJPY", "GBPJPY", "EURGBP", "AUDJPY"):
+    for s in ("GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "AUDJPY", "EURCHF"):
         jobs[s] = lambda s=s: build_ej_fx(s)
+    for s in ("XAGUSD", "UKOIL", "ETHUSD", "SOLUSD", "XRPUSD", "ADAUSD", "DOGEUSD", "LTCUSD", "LINKUSD", "BNBUSD"):
+        jobs[s] = lambda s=s: build_snow_plus(s)
+    for s in ("EURGBP", "EURJPY", "GBPJPY"):
+        jobs[s] = lambda s=s: build_synthetic_cross(s)
     only = sys.argv[1:]
     for sym, fn in jobs.items():
         if only and sym not in only:

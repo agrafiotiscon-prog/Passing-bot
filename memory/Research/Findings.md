@@ -39,6 +39,32 @@ Simulator: `research/sim.py` (conservative intrabar ordering, costs).
 - BTC (Bitstamp 2016–2026): 20d TSMOM Sharpe 1.27, negative 2025. Intraday
   effects nil.
 
+## Round 2 (per-instrument strategies, 26 instruments)
+- Universe added: AUDUSD/USDCAD/USDCHF (2012–22 + 2026), AUDJPY, EURCHF
+  (–2022), XAGUSD/UKOIL (2014/15–2023 + 2026), ETH/LTC/BNB/ADA/XRP/LINK/
+  DOGE/SOL (–2023-09), synthetic EURGBP/EURJPY/GBPJPY from majors (2022+).
+- `research/library.py`: 48 rules × 2 directions per instrument (trend,
+  EMA, Donchian, RSI2/IBS/streak MR, 9 session drifts, intraday momentum,
+  session ORB, prior-day continuation, day-of-week, gap fade, vol breakout).
+  One-shot train selection: 32/1770 picked, 66% positive OOS, mean OOS
+  Sharpe 0.20 (all rules −0.43).
+- More artifact classes found and removed (each had shown Sharpe 1.3–4.5):
+  entries at the 00:00/01:00 bid (rollover, gold re-open), exits into 23:00,
+  synthetic-cross high/low (product bounds). Non-crypto bars now drop
+  23:00–02:00 server; synthetic crosses use close-based rules only.
+- Walk-forward meta-selection (top-K by trailing Sharpe, `meta.py`): OOS
+  Sharpe 0.25–0.34; daily challenge pass 26–31% (< bold play).
+- Pairs MR (`pairs.py`, 12 pairs × 10 configs): best ~0.5 Sharpe
+  (EURUSD/GBPUSD 1h, AUDUSD/EURUSD 1D, UKOIL/USDCAD 1D).
+- Hourly scan on 15 more symbols: 4 rules pass disc+val, all negative OOS.
+- Liquidity-sweep / turtle-soup reversal: negative on all 10 instruments.
+- NFP drift on gold: +0.1R/trade, 12/yr, 60% yrs positive — too rare.
+- Cross-sectional mom/rev: FX negative; crypto 10–20d mom ~1.0 but only
+  2020–22.
+- Family ensembles: crypto trend Sharpe 0.9–1.1, gold trend 0.46 (0.71 since
+  2021); FX trend ≈ 0 or negative; EURGBP mean-reverts.
+- Conclusion unchanged: no edge near Sharpe 3; bold play remains best.
+
 ## Challenge-structure results (the deliverable)
 - "Bold play" (1 entry/day, stop k×ATR_d, TP sized so a win = +10%, risk
   min(2.9%, room)) is the pass-optimal sizing: coin-flip direction passes

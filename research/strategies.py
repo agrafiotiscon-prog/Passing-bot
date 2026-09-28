@@ -251,3 +251,60 @@ def daily_fixed_time(df: pd.DataFrame, hour: float, dirn, sl_atr: float, rr: flo
     risk = sl_atr * a[pos]
     t1 = day + pd.to_timedelta(exit_h, unit="h")
     return _mk(df.index[pos], d, ent - d * risk, ent + d * rr * risk if rr > 0 else np.nan, t1)
+
+
+def sweep_reversal(df: pd.DataFrame, start_h: float = 3.0, end_h: float = 20.0, rr: float = 2.0,
+                   buf_atr: float = 0.02, exit_h: float = 22.75, tgt_mode: str = "rr") -> pd.DataFrame:
+    """Liquidity sweep / turtle-soup intraday: a bar trades beyond the prior
+    day's high (low) and CLOSES back inside -> short (long) at the next open,
+    stop just beyond the bar's extreme, target rr*risk or the opposite side of
+    the prior day's range. One trade per side per day."""
+    h = _hour(df.index)
+    day = df.index.normalize()
+    D = daily_bars(df)
+    ph = D["high"].shift(1).reindex(day).to_numpy()
+    pl = D["low"].shift(1).reindex(day).to_numpy()
+    a = daily_atr(df).to_numpy()
+    hi, lo, cl, op = (df[c].to_numpy() for c in ("high", "low", "close", "open"))
+    win = (h >= start_h) & (h < end_h)
+    short = win & (hi > ph) & (cl < ph)
+    long_ = win & (lo < pl) & (cl > pl)
+    rows = []
+    for mask, d in ((short, -1.0), (long_, 1.0)):
+        pos = np.nonzero(mask)[0]
+        pos = pos[pos + 1 < len(df)]
+        if len(pos) == 0:
+            continue
+        first = ~pd.Series(day[pos]).duplicated().to_numpy()   # first signal per day per side
+        pos = pos[first]
+        ent = op[pos + 1]
+        stop = np.where(d < 0, hi[pos], lo[pos]) - d * buf_atr * a[pos]
+        risk = np.abs(ent - stop)
+        tgt = np.where(d < 0, pl[pos], ph[pos]) if tgt_mode == "range" else ent + d * rr * risk
+        t1 = day[pos] + pd.to_timedelta(exit_h, unit="h")
+        rows.append(_mk(df.index[pos + 1], np.full(len(pos), d), stop, tgt, t1))
+    out = pd.concat(rows, ignore_index=True)
+    ok = (out.stop - (out.tgt)).abs() > 0
+    return out[ok].sort_values("t0").reset_index(drop=True)
+
+
+def nfp_drift(df: pd.DataFrame, rel_h: float = 15.5, first_min: int = 15, sl_atr: float = 0.5, rr: float = 3.0,
+              exit_h: float = 22.75) -> pd.DataFrame:
+    """US payrolls (first Friday of the month, 08:30 ET ~ 15:30 server):
+    trade in the direction of the first `first_min` minutes after release."""
+    h = _hour(df.index)
+    day = df.index.normalize()
+    is_nfp = (df.index.dayofweek == 4) & (df.index.day <= 7)
+    a = daily_atr(df).to_numpy()
+    op, cl = df["open"].to_numpy(), df["close"].to_numpy()
+    bar_min = int(round((df.index[1] - df.index[0]).total_seconds() / 60))
+    nb = max(1, first_min // bar_min)
+    pos0 = np.nonzero(is_nfp & np.isclose(h, rel_h))[0]
+    pos0 = pos0[pos0 + nb < len(df)]
+    d = np.sign(cl[pos0 + nb - 1] - op[pos0])
+    keep = d != 0
+    pos0, d = pos0[keep], d[keep]
+    e = pos0 + nb
+    ent = op[e]
+    risk = sl_atr * a[pos0]
+    return _mk(df.index[e], d, ent - d * risk, ent + d * rr * risk, day[e] + pd.to_timedelta(exit_h, unit="h"))

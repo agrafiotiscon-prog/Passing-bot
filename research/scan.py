@@ -41,7 +41,9 @@ def scan(sym: str, costs=COSTS) -> pd.DataFrame:
     h = hourly(sym)
     O, C = day_matrix(h)
     days = O.index
-    spread, slip = costs[sym]
+    spec = costs[sym]
+    spread, slip = spec[0], spec[1]
+    rel = len(spec) > 2 and spec[2] == "rel"
     lc = np.log(h["close"])
     r1 = lc.diff()
     vol24 = r1.rolling(24).std()
@@ -77,7 +79,7 @@ def scan(sym: str, costs=COSTS) -> pd.DataFrame:
                 continue
             ex = C.iloc[:, xh]
             r = np.log(ex / ent).to_numpy()
-            cost = (spread + 2 * slip) / ent.to_numpy()
+            cost = np.full(len(ent), spread + 2 * slip) if rel else (spread + 2 * slip) / ent.to_numpy()
             yrs = days.year.to_numpy()
             for cname, m in conds.items():
                 ok = m & ~np.isnan(r)

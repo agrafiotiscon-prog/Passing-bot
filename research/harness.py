@@ -39,6 +39,20 @@ COSTS_RAW = {
 }
 
 
+# round-2 instruments (raw-spread demo assumptions)
+EXTRA_RAW = {
+    "AUDUSD": (0.00008, 0.00002), "USDCAD": (0.00010, 0.00002), "USDCHF": (0.00010, 0.00002),
+    "AUDJPY": (0.012, 0.003), "EURCHF": (0.00012, 0.00003), "EURGBP": (0.00008, 0.00002),
+    "EURJPY": (0.012, 0.003), "GBPJPY": (0.018, 0.004), "XAGUSD": (0.02, 0.005),
+    "UKOIL": (0.03, 0.01), "GER40": (1.5, 0.5),
+    **{c: (0.0010, 0.0002, "rel") for c in ("ETHUSD", "SOLUSD", "XRPUSD", "ADAUSD", "DOGEUSD",
+                                           "LTCUSD", "LINKUSD", "BNBUSD")},
+}
+for _k, _v in EXTRA_RAW.items():
+    COSTS_RAW.setdefault(_k, _v)
+    COSTS.setdefault(_k, tuple(x * 2 if isinstance(x, float) else x for x in _v))
+
+
 @dataclass
 class Grid:
     syms: list

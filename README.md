@@ -37,6 +37,20 @@ Why higher is not reachable here:
   Every effect that looked good in-sample decayed or reversed out of sample.
   An apparent Sharpe 2.6 ML edge on EURUSD turned out to be a time-zone
   look-ahead bug in a data source, and was fixed.
+- **Round 2, per-instrument strategies across 26 instruments** (FX majors
+  and crosses, gold, silver, Brent, BTC and 8 altcoins, US indices; see
+  `research/library.py`, `pairs.py`, `meta.py`):
+  - a 1,770-rule library chosen per instrument on training years
+  - pairs mean reversion
+  - walk-forward "strategy momentum" selection
+  - liquidity-sweep reversals
+  - NFP drift
+  - cross-sectional momentum and reversal
+
+  The best honest out-of-sample portfolio reached a Sharpe of about 0.3–0.5.
+  Several apparent Sharpe 1.3–4.5 edges turned out to be data artifacts and
+  were removed: bid prices around the daily rollover and gold's re-open, and
+  the high/low of synthetic crosses.
 
 ## The EA: `mt5/PropBoldPlay.mq5`
 

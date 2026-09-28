@@ -68,6 +68,19 @@ FILES = {
     # --- BTCUSD Bitstamp 1-min (ff137/bitstamp-btcusd-minute-data) ---------
     "btcusd/bitstamp_2012_2025.csv.gz": f"{GH}/ff137/bitstamp-btcusd-minute-data/main/data/historical/btcusd_bitstamp_1min_2012-2025.csv.gz",
     "btcusd/bitstamp_latest.csv": f"{GH}/ff137/bitstamp-btcusd-minute-data/main/data/updates/btcusd_bitstamp_1min_latest.csv",
+    # --- more instruments (round 2) ----------------------------------------
+    "xagusd/snow_M15.csv": f"{SNOW}/commodities/silver/XAGUSD_M15.csv",
+    "ukoil/snow_M15.csv": f"{SNOW}/commodities/brent/BRENTCMDUSD_M15.csv",
+    **{f"{k}/snow_M15.csv": f"{SNOW}/crypto/{d}/{f}_M15.csv"
+       for k, d, f in [("ethusd", "ethusd", "ETHUSD"), ("solusd", "sol", "SOLUSDT"), ("xrpusd", "xrp", "XRPUSDT"),
+                       ("adausd", "adausdt", "ADAUSDT"), ("dogeusd", "doge", "DOGEUSDT"), ("ltcusd", "ltc", "LTCUSDT"),
+                       ("linkusd", "link", "LINKUSDT"), ("bnbusd", "bnb", "BNBUSDT")]},
+    **{f"{k}/gd_15m.csv": f"{GD}/{k}-15m-ohlcv-{c}-historical-data/main/{k.upper()}_15m.csv"
+       for k, c in [("xagusd", "metals"), ("usoil", "commodities"), ("ukoil", "commodities"),
+                    ("audusd", "forex"), ("usdcad", "forex"), ("usdchf", "forex"), ("eurjpy", "forex"),
+                    ("eurgbp", "forex")]},
+    "usdcad/gd_1d.csv": f"{GD}/usdcad-1d-ohlcv-forex-historical-data/main/USDCAD_1d.csv",
+    "usdchf/gd_1d.csv": f"{GD}/usdchf-1d-ohlcv-forex-historical-data/main/USDCHF_1d.csv",
     # --- other FX (MT5 broker export, 2012-2022) ---------------------------
     **{f"{p.lower()}/ej_{tf}.csv": f"{EJ}/{p}/{p}{tf.lower()}.csv"
        for p in ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF",
