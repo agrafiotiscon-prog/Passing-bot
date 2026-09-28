@@ -1,0 +1,7 @@
+# Obsidian per-device state (shared settings in memory/.obsidian are tracked)
+memory/.obsidian/workspace.json
+memory/.obsidian/workspace-mobile.json
+memory/.obsidian/cache
+memory/.obsidian/plugins/*/data.json
+memory/.trash/
+.DS_Store
