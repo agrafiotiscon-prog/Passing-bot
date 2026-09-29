@@ -18,7 +18,7 @@
 //|   it is not a profitable strategy for a funded account.          |
 //+------------------------------------------------------------------+
 #property copyright "Passing-bot"
-#property version   "1.00"
+#property version   "1.01"
 #property description "Prop challenge bold-play manager. ~35-40% pass rate per attempt in backtests 2012-2026; no long-run edge."
 
 #include <Trade\Trade.mqh>
@@ -83,7 +83,7 @@ int OnInit()
    g_pfx = StringFormat("PBP_%I64d_%I64u_%s_", AccountInfoInteger(ACCOUNT_LOGIN), InpMagic, _Symbol);
    if(InpResetState)
      {
-      string names[] = {"init", "start", "dayid", "dayref", "halted", "done", "lastday"};
+      string names[] = {"init", "start", "dayid", "dayref", "halted", "done", "lastday", "missday", "tryday", "tries"};
       for(int i = 0; i < ArraySize(names); i++)
          GlobalVariableDel(Key(names[i]));
      }
@@ -101,8 +101,12 @@ int OnInit()
    g_trade.SetTypeFillingBySymbol(_Symbol);
    MathSrand((uint)GetTickCount());
    EventSetTimer(1);
+   double pre[];
+   int got = CopyClose(_Symbol, PERIOD_D1, 0, InpAtrDays * 10 + InpTrendDays + 2, pre);  // start loading D1 history now
    PrintFormat("PropBoldPlay: initial=%.2f start=%s target=%.2f floor=%.2f",
                g_init, TimeToString(g_start), g_init * (1 + InpTargetPct / 100), g_init * (1 - InpMaxLossPct / 100));
+   PrintFormat("PropBoldPlay: server time %s, daily entry at %02d:%02d server time, D1 bars loaded: %d",
+               TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES), InpEntryHour, InpEntryMinute, got);
    return(INIT_SUCCEEDED);
   }
 
@@ -166,10 +170,35 @@ int Direction()
    if(InpDirMode == DIR_LONG)  return 1;
    if(InpDirMode == DIR_SHORT) return -1;
    if(InpDirMode == DIR_COIN)  return (MathRand() % 2 == 0) ? 1 : -1;
-   double c1 = iClose(_Symbol, PERIOD_D1, 1);
-   double cn = iClose(_Symbol, PERIOD_D1, 1 + InpTrendDays);
+   double c[];
+   ArraySetAsSeries(c, false);
+   int need = InpTrendDays + 1;
+   if(CopyClose(_Symbol, PERIOD_D1, 1, need, c) < need) return 0;   // D1 history not ready yet
+   double c1 = c[need - 1];   // yesterday's close
+   double cn = c[0];          // close InpTrendDays days before that
    if(c1 <= 0 || cn <= 0 || c1 == cn) return 0;
    return c1 > cn ? 1 : -1;
+  }
+
+//--- make sure daily history is downloaded before the entry window ----------
+bool DailyHistoryReady()
+  {
+   double c[];
+   int need = InpAtrDays * 10 + InpTrendDays + 2;
+   return CopyClose(_Symbol, PERIOD_D1, 1, need, c) >= InpAtrDays + InpTrendDays + 2;
+  }
+
+//--- throttled "why no trade" logging --------------------------------------
+string   g_note = "";
+datetime g_note_time = 0;
+void Note(const string why)
+  {
+   if(why != g_note || TimeCurrent() - g_note_time >= 300)
+     {
+      Print("PropBoldPlay: no entry yet - ", why);
+      g_note_time = TimeCurrent();
+     }
+   g_note = why;
   }
 
 //--- money value of a 1.0-lot price move of `dist` ------------------------
@@ -218,9 +247,11 @@ void Manage()
    bool   halted   = GetState("halted", 0) > 0;
 
    string status = done == 1 ? "PASSED" : done == -1 ? "STOPPED (floor)" : done == 2 ? "TIME OVER" : halted ? "halted today" : "active";
-   Comment(StringFormat("PropBoldPlay  %s\nequity %.2f  target %.2f  floor %.2f\nday ref %.2f  halt %.2f  day %d/%d",
+   string traded = (long)GetState("lastday", -1) == day ? "traded today" : StringFormat("entry %02d:%02d server", InpEntryHour, InpEntryMinute);
+   Comment(StringFormat("PropBoldPlay  %s\nequity %.2f  target %.2f  floor %.2f\nday ref %.2f  halt %.2f  day %d/%d\n%s  (server %s)%s",
                         status, eq, target_lvl, floor_lvl, dayref, halt_lvl,
-                        (int)((now - g_start) / 86400) + 1, InpChallengeDays));
+                        (int)((now - g_start) / 86400) + 1, InpChallengeDays,
+                        traded, TimeToString(now, TIME_MINUTES), g_note == "" ? "" : "\nwaiting: " + g_note));
 
    if(done != 0)
      {
@@ -265,14 +296,28 @@ void Manage()
    if(halted || CountPositions() > 0) return;
    if(!InpTradeWeekends && (t.day_of_week == 0 || t.day_of_week == 6)) return;
    int e0 = InpEntryHour * 60 + InpEntryMinute;
-   if(mins < e0 || mins >= e0 + 60 || mins >= InpExitHour * 60 + InpExitMinute) return;
-   if((long)GetState("lastday", -1) == day) return;
-   SetState("lastday", (double)day);          // one attempt per day
+   if((long)GetState("lastday", -1) == day) return;             // already traded today
+   if(mins < e0) return;
+   if(mins >= e0 + 60 || mins >= InpExitHour * 60 + InpExitMinute)
+     {
+      // window over without a trade: say why once, then wait for tomorrow
+      if((long)GetState("missday", -1) != day)
+        {
+         SetState("missday", (double)day);
+         Print("PropBoldPlay: entry window closed with no trade today. Last reason: ",
+               g_note == "" ? "EA was not running during the window" : g_note);
+        }
+      return;
+     }
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
+     { Note("Algo Trading is switched off (toolbar button or EA Common tab)"); return; }
+   if(!DailyHistoryReady())
+     { Note("daily (D1) history still loading - retrying"); return; }
 
    int dir = Direction();
-   if(dir == 0) return;
+   if(dir == 0) { Note("trend direction undefined (D1 closes equal or not loaded) - retrying"); return; }
    double atr = DailyATR();
-   if(atr <= 0) return;
+   if(atr <= 0) { Note("daily ATR not available yet - retrying"); return; }
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double px  = dir > 0 ? ask : bid;
@@ -286,17 +331,32 @@ void Manage()
    double risk_amt = InpRiskPct / 100.0 * g_init;
    risk_amt = MathMin(risk_amt, eq - halt_lvl);
    risk_amt = MathMin(risk_amt, eq - floor_lvl - InpFloorBufferPct / 100.0 * g_init);
-   if(risk_amt <= 0) return;
+   if(risk_amt <= 0)
+     {
+      SetState("lastday", (double)day);
+      Print("PropBoldPlay: no risk budget left (too close to the daily halt or overall floor) - no trade");
+      return;
+     }
    double loss_per_lot = ValuePerLot(MathAbs(px - sl) + spread, true);
-   if(loss_per_lot <= 0) return;
+   if(loss_per_lot <= 0) { Note("symbol tick value not available yet - retrying"); return; }
    double lots = NormalizeLots(risk_amt / loss_per_lot);
-   if(lots <= 0) { Print("PropBoldPlay: lot size below minimum, skip"); return; }
+   if(lots <= 0)
+     {
+      SetState("lastday", (double)day);
+      Print("PropBoldPlay: lot size below the broker minimum for this risk - no trade today");
+      return;
+     }
    //--- margin check
    double margin = 0;
    ENUM_ORDER_TYPE ot = dir > 0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    while(lots > 0 && OrderCalcMargin(ot, _Symbol, lots, px, margin) && margin > AccountInfoDouble(ACCOUNT_MARGIN_FREE) * 0.95)
       lots = NormalizeLots(lots * 0.9);
-   if(lots <= 0) return;
+   if(lots <= 0)
+     {
+      SetState("lastday", (double)day);
+      Print("PropBoldPlay: not enough free margin even for the minimum lot - check account leverage");
+      return;
+     }
 
    //--- bold take-profit: a win lifts equity to the target
    double need = target_lvl - eq;
@@ -308,8 +368,26 @@ void Manage()
 
    bool ok = dir > 0 ? g_trade.Buy(lots, _Symbol, 0.0, sl, tp, "PBP")
                      : g_trade.Sell(lots, _Symbol, 0.0, sl, tp, "PBP");
+   ok = ok && (g_trade.ResultRetcode() == TRADE_RETCODE_DONE || g_trade.ResultRetcode() == TRADE_RETCODE_PLACED);
    PrintFormat("PropBoldPlay: %s %.2f lots @%.5f SL %.5f TP %.5f risk %.2f need %.2f -> %s",
                dir > 0 ? "BUY" : "SELL", lots, px, sl, tp, risk_amt, need, ok ? "ok" : g_trade.ResultRetcodeDescription());
+   if(ok)
+     {
+      SetState("lastday", (double)day);       // one trade per day
+      g_note = "";
+      return;
+     }
+   // failed send (requote, off quotes, ...): retry a few times inside the window
+   double tries = (long)GetState("tryday", -1) == day ? GetState("tries", 0) + 1 : 1;
+   SetState("tryday", (double)day);
+   SetState("tries", tries);
+   if(tries >= 5)
+     {
+      SetState("lastday", (double)day);
+      Print("PropBoldPlay: order rejected 5 times today - giving up until tomorrow");
+     }
+   else
+      Note("order rejected (" + g_trade.ResultRetcodeDescription() + ") - retrying");
   }
 
 void OnTick()  { Manage(); }
